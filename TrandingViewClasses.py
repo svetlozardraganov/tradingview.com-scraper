@@ -1,5 +1,8 @@
 
 #01 IMPORT LIBRARIES
+from timeit import default_timer as timer
+start = timer()
+
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -25,7 +28,18 @@ logging.getLogger().setLevel(logging.INFO)
 
 class DataBase():
     
-    database_file = 'tradingview_database.db'
+    # database_file = 'tradingview_database.db'
+    database_file = 'database_test.db'
+
+    @classmethod
+    def Start(cls): #Connect to Database
+        cls.conn = sqlite3.connect(cls.database_file) #connect to sqlite3-database
+        cls.cursor = cls.conn.cursor()
+
+    @classmethod
+    def Stop(cls): #Disconnect/Commit to Database
+        cls.conn.commit() # Commit your changes in the database
+        cls.conn.close() #Closing the connection
     
     @classmethod
     def AddToDatabase(cls, data): #method that innitiates the write-to-database method with the needed parameters
@@ -57,9 +71,7 @@ class DataBase():
         """
 
         logging.info(f'Storring {table_name} in {cls.database_file}')
-        conn = sqlite3.connect(cls.database_file) #connect to sqlite3-database
-        data.to_sql(name=table_name, con=conn, if_exists='replace',  index=True) #store dataframe to sqlite-database
-        conn.close()
+        data.to_sql(name=table_name, con=cls.conn, if_exists='replace',  index=True) #store dataframe to sqlite-database
 
     @classmethod
     def ReadFromDatabase(cls, table_name): #read data from Database, if available return the data if not return None
@@ -72,18 +84,15 @@ class DataBase():
         table_name = NASDAQ-AAPL/Ratios \n
         table_name = NASDAQ-AAPL/Company-Data \n
         """
-        conn = sqlite3.connect(cls.database_file)
 
         try: #get the data from database and put it in pandas-dataframe
-            output = pd.read_sql_query(f"SELECT * from '{table_name}'", conn, index_col='index') 
+            output = pd.read_sql_query(f"SELECT * from '{table_name}'", cls.conn, index_col='index') 
             logging.info(f"Load {table_name} from DataBase")
             
         except : #if data not available, return None
             logging.error(f'ERROR: {table_name}, not found in {cls.database_file}')
-            conn.close()
             return None
 
-        conn.close()
         return output
 
     @classmethod
@@ -92,73 +101,41 @@ class DataBase():
 
         table_name_suffix = ['/Income-Statement', '/Balance-Sheet', '/Cashflow-Statement', '/Ratios', '/Company-Data']
         #Connecting to sqlite
-        conn = sqlite3.connect(cls.database_file)
-
-        #Creating a cursor object using the cursor() method
-        cursor = conn.cursor()
 
         #Droping  table if already exists
         for i in range(0,len(table_name_suffix)):
             try:
-                cursor.execute(f"DROP TABLE '{table_name_prefix + table_name_suffix[i]}'")
+                cls.cursor.execute(f"DROP TABLE '{table_name_prefix + table_name_suffix[i]}'")
                 logging.info(f"Table {table_name_prefix + table_name_suffix[i]} dropped... ")
             except sqlite3.OperationalError:
                 logging.error(f' Error removing {table_name_prefix + table_name_suffix[i]}. Table is probably not availabe in the database!')
 
-        # Commit your changes in the database
-        conn.commit()
-
-        #Closing the connection
-        conn.close()
-
     @classmethod
     def ListAllTables(cls):
-        conn = sqlite3.connect(cls.database_file)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        # logging.info(cursor.fetchall())
-
-        
-        output_temp = cursor.fetchall()
+        cls.cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        output_temp = cls.cursor.fetchall()
         output = []
         for item in output_temp:
             output.append(item[0])
 
-        #Closing the connection
-        conn.close()
-
         return(output)
-
+    
     @classmethod
     def ListTableRows(cls, table_name):
-
-        conn = sqlite3.connect(cls.database_file)
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT * FROM '{table_name}'")
-
-        output = cursor.fetchall()
-        conn.close()
+        cls.cursor.execute(f"SELECT * FROM '{table_name}'")
+        output = cls.cursor.fetchall()
         return output
 
     @classmethod
     def ListRowByName(cls, row_name, table_name):
-
-        conn = sqlite3.connect(cls.database_file)
-        cursor = conn.cursor()
-        cursor.execute(f'SELECT * FROM "{table_name}" WHERE "index"="{row_name}"')
-
-        output = cursor.fetchone()
-        conn.close()
+        cls.cursor.execute(f'SELECT * FROM "{table_name}" WHERE "index"="{row_name}"')
+        output = cls.cursor.fetchone()
         return output
 
     @classmethod
     def ListByColumnName(cls, column_name, table_name):
-        conn = sqlite3.connect(cls.database_file)
-        cursor = conn.cursor()
-        cursor.execute(f'SELECT "{column_name}" FROM "{table_name}"')
-
-        output = cursor.fetchall()
-        conn.close()
+        cls.cursor.execute(f'SELECT "{column_name}" FROM "{table_name}"')
+        output = cls.cursor.fetchall()
         return output
 
     @classmethod
@@ -168,53 +145,30 @@ class DataBase():
 
     @classmethod
     def GetTableShema(cls,table_name):
-        conn = sqlite3.connect(cls.database_file)
-        cursor = conn.cursor()
-        cursor.execute(f'PRAGMA table_info("{table_name}")')
-        output = cursor.fetchall()
-        conn.close()
+        cls.cursor.execute(f'PRAGMA table_info("{table_name}")')
+        output = cls.cursor.fetchall()
         return output
 
     @classmethod
     def RenameColumn(cls, col_old_name, col_new_name, table_name):
-        conn = sqlite3.connect(cls.database_file)
-        cursor = conn.cursor()
-        cursor.execute(f'ALTER TABLE "{table_name}" RENAME COLUMN "{col_old_name}" TO "{col_new_name}"')
-        conn.close()
+        cls.cursor.execute(f'ALTER TABLE "{table_name}" RENAME COLUMN "{col_old_name}" TO "{col_new_name}"')
 
     @classmethod
     def RenameTable(cls, table_name_old, table_name_new):
-        conn = sqlite3.connect(cls.database_file)
-        cursor = conn.cursor()
-        cursor.execute(f'ALTER TABLE "{table_name_old}" RENAME TO "{table_name_new}"')
-        output = cursor.fetchall()
-        conn.close()
+        cls.cursor.execute(f'ALTER TABLE "{table_name_old}" RENAME TO "{table_name_new}"')
 
     @classmethod
     def UpdateValue(cls,table_name, col_to_update, new_value, search_col, search_value):
-        conn = sqlite3.connect(cls.database_file)
-        cursor = conn.cursor()
-        cursor.execute(f'UPDATE "{table_name}" SET "{col_to_update}"="{new_value}" WHERE "{search_col}"="{search_value}"')
+        cls.cursor.execute(f'UPDATE "{table_name}" SET "{col_to_update}"="{new_value}" WHERE "{search_col}"="{search_value}"')
         #UPDATE "ARCA-BATL/Company-Data" SET "value"="1234567" WHERE "index" = "company_data_url"
-        conn.commit()
-        conn.close()
 
     @classmethod
-    def DeleteAllRowsFromTable(cls,table_name):
-        conn = sqlite3.connect(cls.database_file)
-        cursor = conn.cursor()
-        cursor.execute(f'DELETE FROM "{table_name}"')
-        conn.commit()
-        conn.close()
+    def DeleteAllRowsFromTable(cls,table_name):        
+        cls.cursor.execute(f'DELETE FROM "{table_name}"')
 
     @classmethod
     def InsertRows(cls, table_name, columns_tuple, values_tuple):
-        conn = sqlite3.connect(cls.database_file)
-        cursor = conn.cursor()
-        cursor.execute(f'INSERT INTO "{table_name}" {columns_tuple} VALUES {values_tuple}')
-        conn.commit()
-        conn.close()
-
+        cls.cursor.execute(f'INSERT INTO "{table_name}" {columns_tuple} VALUES {values_tuple}')
         # INSERT INTO "ARCA-BATL/Company-Data" ("index", "value") VALUES ("1", "2")
     
     @classmethod
@@ -325,7 +279,6 @@ class Helper():
             print(f'self.{item_temp}_str = "{item}"')
             # self.item_keys.append(item_temp)
 
-
         # self.res = {}
         # for key in self.item_keys:
         #     for value in self.items:
@@ -335,7 +288,6 @@ class Helper():
 
 
         # print(self.res)
-
     # helper = Helper()
     # helper.generateClassVariables(companies[0].statistics)
 
@@ -1368,6 +1320,8 @@ class CompareCompaniesVisualizer():
         fig.show()
 
 
+DataBase.Start()
+
 tables = DataBase.ListAllTables()
 
 # for item in tables:
@@ -1406,20 +1360,23 @@ for table in tables:
 for company in company_data_tables:
     rows = DataBase.ListTableRows(company)
     
-    company_url = rows[0][1]
-    print(company_url)
+    # company_url = rows[0][1]
+#     print(company_url)
     # company_url = company_url.replace('https://www.tradingview.com/symbols/', '')
     # company_url = company_url.replace('/financials-income-statement/?selected=', '')
 
-    # rows.insert(0,("company_url",company_url))
+    company_url = 'sample_url'
+
+    rows.insert(0,("company_url",company_url))
     # print(company)
     # print(rows)
-    # DataBase().DeleteAllRowsFromTable(table_name=company)
+    DataBase().DeleteAllRowsFromTable(table_name=company)
 
-    # for item in rows:
-    #     # print(item)
-    #     DataBase.InsertRows(table_name=company, columns_tuple=("index", "value"), values_tuple=item)
+    for item in rows:
+        # print(item)
+        DataBase.InsertRows(table_name=company, columns_tuple=("index", "value"), values_tuple=item)
 
+DataBase.Stop()
 
-# DELETE FROM "ARCA-BATL/Company-Data"
-# INSERT INTO "ARCA-BATL/Company-Data" ("index", "value") VALUES ("1", "2")
+end = timer()
+print(end - start) # Time in seconds, e.g. 5.38091952400282
