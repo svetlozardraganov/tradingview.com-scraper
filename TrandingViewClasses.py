@@ -24,22 +24,26 @@ import sqlite3
 import xlwings as xw
 from pathlib import Path
 
+import concurrent.futures
+
 logging.getLogger().setLevel(logging.INFO)
 
 class DataBase():
     
-    # database_file = 'tradingview_database.db'
-    database_file = 'database_test.db'
+    database_file = 'tradingview_database.db'
+    # database_file = 'database_test.db'
 
     @classmethod
     def Start(cls): #Connect to Database
         cls.conn = sqlite3.connect(cls.database_file) #connect to sqlite3-database
         cls.cursor = cls.conn.cursor()
+        logging.info('DataBase Connected')
 
     @classmethod
     def Stop(cls): #Disconnect/Commit to Database
         cls.conn.commit() # Commit your changes in the database
         cls.conn.close() #Closing the connection
+        logging.info('DataBase Disconnected')
     
     @classmethod
     def AddToDatabase(cls, data): #method that innitiates the write-to-database method with the needed parameters
@@ -522,7 +526,6 @@ class ScrapeTrendingView():
 
         self.statistics = self.scraped_data_to_dataframe(output=output)
 
-
     def scrapeCompanyData(self, company_url):
         # self.company_data_url = "https://www.tradingview.com/symbols/" + company_url + "/forecast/"
         self.company_data_url = "https://www.tradingview.com/symbols/" + company_url + "/technicals/"
@@ -548,7 +551,6 @@ class ScrapeTrendingView():
         exchage_css = ".tv-symbol-header__exchange" #NASDAQ/NYSE
         exchage_element = self.driver.find_element(By.CSS_SELECTOR, exchage_css)
         self.exchange = exchage_element.text
-
 
     def companyData_to_dataframe(self):
 
@@ -707,11 +709,40 @@ class GetCompanyData():
     """ Get company data first from DataBase and if not available Scrape it from website """
     companies = []
     
+    # @classmethod
+    # def get_data(cls, companies_urls):
+    #     DataBase.Start()
+    #     for url in companies_urls:
+
+    #         #get the data from DataBase
+    #         company_data = DataBase()
+    #         company_data.GetFromDataBase(company_url=url)
+    #         cls.companies.append(company_data)
+
+    #         #if data is not loaded from Database
+    #         if company_data.income_statement is None or \
+    #             company_data.balanse_sheet is None or \
+    #             company_data.cashflow_statement is None or \
+    #             company_data.statistics is None or \
+    #             company_data.company_data is None:
+                
+    #             #get the data from the website
+    #             company_data = ScrapeTrendingView(company_url=url)
+    #             cls.companies.append(company_data)
+
+    #             #store the scraped data to DataBase
+    #             DataBase.AddToDatabase(data=company_data)
+
+    #     DataBase.Stop() #Disconnect Database 
+    #     return cls.companies #return company-data
+
     @classmethod
     def get_data(cls, companies_urls):
+        DataBase.Start() #Connect to DataBase 
+        urls_not_in_database = [] #collect urls not found in database
 
+        #run get-company-data process on separate threads
         for url in companies_urls:
-
             #get the data from DataBase
             company_data = DataBase()
             company_data.GetFromDataBase(company_url=url)
@@ -724,14 +755,31 @@ class GetCompanyData():
                 company_data.statistics is None or \
                 company_data.company_data is None:
                 
-                #get the data from the website
-                company_data = ScrapeTrendingView(company_url=url)
-                cls.companies.append(company_data)
+                #collect companies that needs to be scraped for the website
+                urls_not_in_database.append(url)
+        
+        #get the data from the website
+        if urls_not_in_database: #if not empty
 
-                #store the scraped data to DataBase
-                DataBase.AddToDatabase(data=company_data)
+            #start website scraping in separate threads 
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                results = [executor.submit(cls.run_in_separate_thread, url) for url in urls_not_in_database ]
+                
+                #when webscraping is completed
+                for item in concurrent.futures.as_completed(results):
+                    company_data = item.result()
+                    print(">"*50, type(company_data))
+                    cls.companies.append(company_data)
+                    DataBase.AddToDatabase(data=company_data)
 
-        return cls.companies
+        
+        DataBase.Stop() #Disconnect Database 
+        return cls.companies #return company-data
+
+    @classmethod
+    def run_in_separate_thread(cls, url):
+        company_data = ScrapeTrendingView(company_url=url)
+        return(company_data)
 
 class IncomeStatementVisualizer():
     
@@ -1320,9 +1368,9 @@ class CompareCompaniesVisualizer():
         fig.show()
 
 
-DataBase.Start()
+# DataBase.Start()
 
-tables = DataBase.ListAllTables()
+# tables = DataBase.ListAllTables()
 
 # for item in tables:
 #     print(item)
@@ -1350,33 +1398,76 @@ tables = DataBase.ListAllTables()
 #fix the funtion for getting the ticker and the ticker and exchange in the Company-Data database
 #fix the column-name 0 in Company-Data database > current database is already updated to "value" but newly scraped data will use the old name "0"
 
-company_data_tables = []
-for table in tables:
-    if 'Company-Data' in table:
-        # print(table)
-        company_data_tables.append(table)
+# company_data_tables = []
+# for table in tables:
+#     if 'Company-Data' in table:
+#         # print(table)
+#         company_data_tables.append(table)
 
 
-for company in company_data_tables:
-    rows = DataBase.ListTableRows(company)
+# companies_with_wrong_names = []
+# right_name = []
+# wrong_name = []
+# for company in company_data_tables:
+#     # rows = DataBase.ListTableRows(company)
+#     row = DataBase().ListRowByName(table_name=company, row_name="company_url")
     
-    # company_url = rows[0][1]
-#     print(company_url)
-    # company_url = company_url.replace('https://www.tradingview.com/symbols/', '')
-    # company_url = company_url.replace('/financials-income-statement/?selected=', '')
+#     if row[1] not in company:
+#         companies_with_wrong_names.append(company)
+#         right_name.append(row[1])
+#         wrong_name.append(company.split('/')[0])
+#         print("***")
 
-    company_url = 'sample_url'
+        # new_name = company.split('/')[1]
+        # new_name = row[1] + '/' + new_name
+        # print(row[1], company, new_name)
+        # DataBase().DropTable(new_name.split('/')[0])
+        # DataBase().RenameTable(table_name_old=company, table_name_new=new_name)
+    
+    # print(row)
+    
+#     # company_url = rows[0][1]
+# #     print(company_url)
+#     # company_url = company_url.replace('https://www.tradingview.com/symbols/', '')
+#     # company_url = company_url.replace('/financials-income-statement/?selected=', '')
 
-    rows.insert(0,("company_url",company_url))
-    # print(company)
-    # print(rows)
-    DataBase().DeleteAllRowsFromTable(table_name=company)
+#     company_url = 'sample_url'
 
-    for item in rows:
-        # print(item)
-        DataBase.InsertRows(table_name=company, columns_tuple=("index", "value"), values_tuple=item)
+#     rows.insert(0,("company_url",company_url))
+#     # print(company)
+#     # print(rows)
+#     DataBase().DeleteAllRowsFromTable(table_name=company)
 
-DataBase.Stop()
+#     for item in rows:
+#         # print(item)
+#         DataBase.InsertRows(table_name=company, columns_tuple=("index", "value"), values_tuple=item)
 
-end = timer()
-print(end - start) # Time in seconds, e.g. 5.38091952400282
+# for i in range(len(companies_with_wrong_names)):
+#     # print(right_name[i], companies_with_wrong_names[i], wrong_name[i])
+
+#     old_name1 = wrong_name[i] + '/Balance-Sheet'
+#     new_name1 = right_name[i] + '/Balance-Sheet'
+#     DataBase().RenameTable(table_name_old=old_name1, table_name_new=new_name1)
+
+#     old_name2 = wrong_name[i] + '/Cashflow-Statement'
+#     new_name2 = right_name[i] + '/Cashflow-Statement'
+#     DataBase().RenameTable(table_name_old=old_name2, table_name_new=new_name2)
+
+#     old_name3 = wrong_name[i] + '/Company-Data'
+#     new_name3 = right_name[i] + '/Company-Data'
+#     DataBase().RenameTable(table_name_old=old_name3, table_name_new=new_name3)
+
+#     old_name4 = wrong_name[i] + '/Income-Statement'
+#     new_name4 = right_name[i] + '/Income-Statement'
+#     DataBase().RenameTable(table_name_old=old_name4, table_name_new=new_name4)
+
+#     old_name5 = wrong_name[i] + '/Ratios'
+#     new_name5 = right_name[i] + '/Ratios'
+#     DataBase().RenameTable(table_name_old=old_name5, table_name_new=new_name5)
+
+
+
+# DataBase.Stop()
+
+# end = timer()
+# print(end - start) # Time in seconds, e.g. 5.38091952400282

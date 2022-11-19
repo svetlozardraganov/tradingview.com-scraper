@@ -57,3 +57,6 @@ class TextParams():
 
 
         # print(self.res)
+
+
+test = TextParams()
