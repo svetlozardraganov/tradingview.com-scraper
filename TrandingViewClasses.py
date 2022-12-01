@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.offline import iplot
+from plotly.subplots import make_subplots
 
 import requests
 import logging
@@ -26,7 +27,7 @@ from pathlib import Path
 
 import concurrent.futures
 
-logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().setLevel(logging.ERROR)
 
 class DataBase():
     
@@ -708,45 +709,18 @@ class ScrapeTrendingView():
 class GetCompanyData():
     """ Get company data first from DataBase and if not available Scrape it from website """
     companies = []
-    
-    # @classmethod
-    # def get_data(cls, companies_urls):
-    #     DataBase.Start()
-    #     for url in companies_urls:
-
-    #         #get the data from DataBase
-    #         company_data = DataBase()
-    #         company_data.GetFromDataBase(company_url=url)
-    #         cls.companies.append(company_data)
-
-    #         #if data is not loaded from Database
-    #         if company_data.income_statement is None or \
-    #             company_data.balanse_sheet is None or \
-    #             company_data.cashflow_statement is None or \
-    #             company_data.statistics is None or \
-    #             company_data.company_data is None:
-                
-    #             #get the data from the website
-    #             company_data = ScrapeTrendingView(company_url=url)
-    #             cls.companies.append(company_data)
-
-    #             #store the scraped data to DataBase
-    #             DataBase.AddToDatabase(data=company_data)
-
-    #     DataBase.Stop() #Disconnect Database 
-    #     return cls.companies #return company-data
 
     @classmethod
     def get_data(cls, companies_urls):
         DataBase.Start() #Connect to DataBase 
         urls_not_in_database = [] #collect urls not found in database
+        cls.companies = [] #reset companies variable 
 
         #run get-company-data process on separate threads
         for url in companies_urls:
             #get the data from DataBase
             company_data = DataBase()
             company_data.GetFromDataBase(company_url=url)
-            cls.companies.append(company_data)
 
             #if data is not loaded from Database
             if company_data.income_statement is None or \
@@ -757,6 +731,10 @@ class GetCompanyData():
                 
                 #collect companies that needs to be scraped for the website
                 urls_not_in_database.append(url)
+            
+            #if data loaded from DataBase
+            else:
+                cls.companies.append(company_data)
         
         #get the data from the website
         if urls_not_in_database: #if not empty
@@ -780,6 +758,7 @@ class GetCompanyData():
     def run_in_separate_thread(cls, url):
         company_data = ScrapeTrendingView(company_url=url)
         return(company_data)
+
 
 class IncomeStatementVisualizer():
     
@@ -1355,20 +1334,82 @@ class CompareCompaniesVisualizer():
         fig = go.Figure()
 
         for company in self.companies_data:
-
             columns = company.statistics.columns
             rows = company.statistics.loc[parameter_name]
-            trace_name = f"{company.company_name}"# | {parameter_name}"
+            trace_name = f"{company.company_ticker} | {company.company_name}"# | {parameter_name}"
             fig = fig.add_trace(go.Scatter(x = columns, y= rows, name=trace_name))
 
         fig.update_xaxes(categoryorder='category ascending')  # sort X-axis (when X-axis of different companies contains different ranges i.e. 2015-2021, 2016-2022)
+
         fig.update_traces(mode="markers+lines", hovertemplate=None) #enable hover-mode, interactively display values on the graph when pointed with mouse
         fig.update_layout(hovermode="x", hoverlabel_namelength=-1,  title=parameter_name) #display the full parameter name
 
         fig.show()
 
+    
+    def statistics_ratios_subplots(self, parameter_name):
+
+        fig = go.Figure()
+        number_of_companies = len(self.companies_data)
+        subplot_cols = 3
+        subplot_rows = int(number_of_companies / subplot_cols) + (number_of_companies % subplot_cols > 0) #get integer rounded up
+        subplot_titles = list(f'{company.company_ticker}|{company.company_name}' for company in self.companies_data) #get titles of subplots
+        fig = make_subplots(rows=subplot_rows, cols=subplot_cols, subplot_titles=subplot_titles)
+        fig_row = 1
+        fig_col = 1
+
+        for company in self.companies_data:
+            columns = company.statistics.columns
+            rows = company.statistics.loc[parameter_name]
+            trace_name = f"{company.company_ticker} | {company.company_name}"# | {parameter_name}"
+            fig = fig.add_trace(go.Scatter(x = columns, y= rows, name=trace_name), row=fig_row, col=fig_col)
+
+            if fig_col < subplot_cols:
+                fig_col = fig_col+1
+            else:
+                fig_col=1
+                fig_row = fig_row + 1
+
+        fig.update_xaxes(categoryorder='category ascending')  # sort X-axis (when X-axis of different companies contains different ranges i.e. 2015-2021, 2016-2022)
+
+        fig.update_traces(mode="markers+lines", hovertemplate=None) #enable hover-mode, interactively display values on the graph when pointed with mouse
+        fig.update_layout(hovermode="x", hoverlabel_namelength=-1,  title=parameter_name) #display the full parameter name
+        fig.update_layout(height=300*subplot_rows) #update the subplot height
+        fig.update_layout(showlegend=False) #update the subplot height
+
+        fig.show()
+
+
+    def average_parameter_value(self, parameter_name, top_companies = 15):
+        companies_data = [] #collect company-data information, needed for export 
+        companies_names = [] #collect copany-names, needed for visuals
+        param_values = [] #collect average-value for respective parameter_name
+
+        for company in self.companies_data:
+            companies_data.append(company) #get company-data
+            companies_names.append(f'{company.company_ticker} | {company.company_name}') #get company ticker and name
+            param_values.append(company.statistics.loc[parameter_name].mean()) #get average-values of the respetive parameter
+
+        
+        data = pd.DataFrame(list(zip(param_values, companies_data)), index=companies_names, columns =[parameter_name, 'company_data']) #convert lists to pandas
+        data.sort_values(by=[parameter_name], axis=0, ascending=False, inplace=True) #sort data by respective parameter_name
+        data = data.head(top_companies) #keep the top Nth company only
+        # print(data)
+        
+        data_for_visualizing = data.drop(columns='company_data') #remove company_data colums from dataframe, not need for visuals
+        output = data['company_data'].to_list() #get the company_data only, needed for export
+        fig = px.bar(data_for_visualizing, orientation='h') #create a bar-chart
+        fig.update_yaxes(autorange="reversed") #reverse y-exis to match dataframe top-to-bottom order
+        # # fig.update_layout(barmode='stack', yaxis={'categoryorder': 'total ascending'})
+
+        print(data_for_visualizing)
+        # fig.show()
+        return output
+
 
 # DataBase.Start()
+# DataBase.DropTable("NYSE-PXD")
+# DataBase.Stop()
 
 # tables = DataBase.ListAllTables()
 
