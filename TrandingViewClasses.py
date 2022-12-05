@@ -56,6 +56,8 @@ class DataBase():
         cls.StoreInDatabase(data=data.balanse_sheet, table_name=(data.company_url + '/Balance-Sheet'))
         cls.StoreInDatabase(data=data.cashflow_statement, table_name=(data.company_url + '/Cashflow-Statement'))
         cls.StoreInDatabase(data=data.statistics, table_name=(data.company_url + '/Ratios'))
+        if data.dividents is not None:
+            cls.StoreInDatabase(data=data.dividents, table_name=(data.company_url + '/Dividents'))
         cls.StoreInDatabase(data=data.company_data, table_name=(data.company_url + '/Company-Data'))
 
     @classmethod
@@ -186,8 +188,9 @@ class DataBase():
         self.balanse_sheet = __class__.ReadFromDatabase(table_name= company_url + "/Balance-Sheet") #attempt to get the data from database
         self.cashflow_statement = __class__.ReadFromDatabase(table_name= company_url + "/Cashflow-Statement") #attempt to get the data from database
         self.statistics = __class__.ReadFromDatabase(table_name= company_url + "/Ratios") #attempt to get the data from database
+        self.dividents = __class__.ReadFromDatabase(table_name= company_url + "/Dividents") #attempt to get the data from database
         self.company_data = __class__.ReadFromDatabase(table_name= company_url + "/Company-Data") #attempt to get the data from database
-        
+
         if self.company_data is not None:
             self.company_name = self.company_data.loc['company_name'][0]
             self.company_ticker = self.company_data.loc['company_ticker'][0]
@@ -317,14 +320,15 @@ class ScrapeTrendingView():
         self.time_sleep = 2
         # self.driver.maximize_window()
 
-        self.scrapeIncomeStatement(company_url=company_url) #start Income-Statement scraping
-        self.scrapeBalanceSheet(company_url=company_url) #start Balance-Sheet scraping
-        self.scrapeCashFlow(company_url=company_url) #start Cashflow-Statement scraping
-        self.scrapeStatistics(company_url=company_url) #start Ratios scraping
-        self.scrapeCompanyData(company_url = company_url) #start Company-Data scraping
+        # self.scrapeIncomeStatement(company_url=company_url) #start Income-Statement scraping
+        # self.scrapeBalanceSheet(company_url=company_url) #start Balance-Sheet scraping
+        # self.scrapeCashFlow(company_url=company_url) #start Cashflow-Statement scraping
+        # self.scrapeStatistics(company_url=company_url) #start Ratios scraping
+        self.scrapeDividents(company_url=company_url) #start Dividents scraping
+        # self.scrapeCompanyData(company_url = company_url) #start Company-Data scraping
 
         #add additional data to dataframe
-        self.companyData_to_dataframe()
+        # self.companyData_to_dataframe()
 
         self.driver.close()
 
@@ -527,6 +531,26 @@ class ScrapeTrendingView():
 
         self.statistics = self.scraped_data_to_dataframe(output=output)
 
+    def scrapeDividents(self,company_url):
+        logging.info('Start Dividents Scrape')
+        self.dividents_url = "https://www.tradingview.com/symbols/" + company_url + "/financials-dividends/?selected="
+        self.driver.get(self.dividents_url)
+        time.sleep(self.time_sleep)
+
+        # self.close_cookies_popup()
+        self.wait_page_to_load()
+
+        # scrape dividents
+        try: #if dividents exists
+            output = self.scrape_the_data()
+            self.dividents = self.scraped_data_to_dataframe(output=output)
+
+        except: #if dividents not exists, return none
+             self.dividents = None
+
+        print(self.dividents)
+        
+
     def scrapeCompanyData(self, company_url):
         # self.company_data_url = "https://www.tradingview.com/symbols/" + company_url + "/forecast/"
         self.company_data_url = "https://www.tradingview.com/symbols/" + company_url + "/technicals/"
@@ -549,8 +573,10 @@ class ScrapeTrendingView():
         # print(self.company_ticker)
 
         # exchage_css = "span[class='tv-symbol-header__second-line tv-symbol-header__second-line--with-hover js-symbol-dropdown'] span[class='tv-symbol-header__exchange']" #NASDAQ/NYSE
-        exchage_css = ".tv-symbol-header__exchange" #NASDAQ/NYSE
-        exchage_element = self.driver.find_element(By.CSS_SELECTOR, exchage_css)
+        # exchage_css = ".tv-symbol-header__exchange" #NASDAQ/NYSE
+        # exchage_element = self.driver.find_element(By.CSS_SELECTOR, exchage_css)
+        exchange_xpath = "//span[@class='tv-symbol-header__second-line tv-symbol-header__second-line--with-hover js-symbol-dropdown']/span[2]"
+        exchage_element = self.driver.find_element(By.XPATH, exchange_xpath)
         self.exchange = exchage_element.text
 
     def companyData_to_dataframe(self):
