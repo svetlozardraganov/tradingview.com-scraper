@@ -1284,147 +1284,6 @@ class StatisticsRatiosVisualizer():
                 hovermode="x", hoverlabel_namelength=-1)
             fig.show()
 
-class CompareCompaniesVisualizer_old():
-
-    def __init__(self, companies_data):
-        self.companies_data = companies_data
-
-        self.income_stat_params = IncomeStatementVisualizer(company_data=companies_data[0])
-        self.balanse_sh_params = BalanceSheetVisualizer(company_data=companies_data[0])
-        self.cashflow_params = CashflowStatementVisualizer(company_data=companies_data[0])
-        self.statistics_params = StatisticsRatiosVisualizer(company_data=companies_data[0])
-
-    def income_statement_visualizer(self, parameter_name):
-
-        fig = go.Figure()
-
-        for company in self.companies_data:
-
-            columns = company.income_statement.columns
-            rows = company.income_statement.loc[parameter_name]
-            trace_name = f"{company.company_name}"# | {parameter_name}"
-            fig = fig.add_trace(go.Scatter(x = columns, y= rows, name=trace_name))
-
-        fig.update_xaxes(categoryorder='category ascending')  # sort X-axis (when X-axis of different companies contains different ranges i.e. 2015-2021, 2016-2022)
-        fig.update_traces(mode="markers+lines", hovertemplate=None) #enable hover-mode, interactively display values on the graph when pointed with mouse
-        fig.update_layout(hovermode="x", hoverlabel_namelength=-1,  title=parameter_name) #display the full parameter name
-
-        fig.show()
-                
-        # Excel.insert_visual(fig=fig, name=parameter_name)
-        # Excel.insert_visual(fig=fig, cell='A2', name=parameter_name )
-    
-    def balanse_sheet_visualizer(self, parameter_name):
-
-        fig = go.Figure()
-
-        for company in self.companies_data:
-
-            columns = company.balanse_sheet.columns
-            rows = company.balanse_sheet.loc[parameter_name]
-            trace_name = f"{company.company_name}"# | {parameter_name}"
-            fig = fig.add_trace(go.Scatter(x = columns, y= rows, name=trace_name))
-
-        fig.update_xaxes(categoryorder='category ascending')  # sort X-axis (when X-axis of different companies contains different ranges i.e. 2015-2021, 2016-2022)
-        fig.update_traces(mode="markers+lines", hovertemplate=None) #enable hover-mode, interactively display values on the graph when pointed with mouse
-        fig.update_layout(hovermode="x", hoverlabel_namelength=-1,  title=parameter_name) #display the full parameter name
-
-        fig.show()
-
-    def cashflow_statement_visualizer(self, parameter_name):
-
-        fig = go.Figure()
-
-        for company in self.companies_data:
-
-            columns = company.cashflow_statement.columns
-            rows = company.cashflow_statement.loc[parameter_name]
-            trace_name = f"{company.company_name}"# | {parameter_name}"
-            fig = fig.add_trace(go.Scatter(x = columns, y= rows, name=trace_name))
-
-        fig.update_xaxes(categoryorder='category ascending')  # sort X-axis (when X-axis of different companies contains different ranges i.e. 2015-2021, 2016-2022)
-        fig.update_traces(mode="markers+lines", hovertemplate=None) #enable hover-mode, interactively display values on the graph when pointed with mouse
-        fig.update_layout(hovermode="x", hoverlabel_namelength=-1,  title=parameter_name) #display the full parameter name
-
-        fig.show()
-
-    def statistics_ratios_visualizer(self, parameter_name):
-
-        fig = go.Figure()
-
-        for company in self.companies_data:
-            columns = company.statistics.columns
-            rows = company.statistics.loc[parameter_name]
-            trace_name = f"{company.company_ticker} | {company.company_name}"# | {parameter_name}"
-            fig = fig.add_trace(go.Scatter(x = columns, y= rows, name=trace_name))
-
-        fig.update_xaxes(categoryorder='category ascending')  # sort X-axis (when X-axis of different companies contains different ranges i.e. 2015-2021, 2016-2022)
-
-        fig.update_traces(mode="markers+lines", hovertemplate=None) #enable hover-mode, interactively display values on the graph when pointed with mouse
-        fig.update_layout(hovermode="x", hoverlabel_namelength=-1,  title=parameter_name) #display the full parameter name
-
-        fig.show()
-
-    
-    def statistics_ratios_subplots(self, parameter_name):
-
-        fig = go.Figure()
-        number_of_companies = len(self.companies_data)
-        subplot_cols = 3
-        subplot_rows = int(number_of_companies / subplot_cols) + (number_of_companies % subplot_cols > 0) #get integer rounded up
-        subplot_titles = list(f'{company.company_ticker}|{company.company_name}' for company in self.companies_data) #get titles of subplots
-        fig = make_subplots(rows=subplot_rows, cols=subplot_cols, subplot_titles=subplot_titles)
-        fig_row = 1
-        fig_col = 1
-
-        for company in self.companies_data:
-            columns = company.statistics.columns
-            rows = company.statistics.loc[parameter_name]
-            trace_name = f"{company.company_ticker} | {company.company_name}"# | {parameter_name}"
-            fig = fig.add_trace(go.Scatter(x = columns, y= rows, name=trace_name), row=fig_row, col=fig_col)
-
-            if fig_col < subplot_cols:
-                fig_col = fig_col+1
-            else:
-                fig_col=1
-                fig_row = fig_row + 1
-
-        fig.update_xaxes(categoryorder='category ascending')  # sort X-axis (when X-axis of different companies contains different ranges i.e. 2015-2021, 2016-2022)
-
-        fig.update_traces(mode="markers+lines", hovertemplate=None) #enable hover-mode, interactively display values on the graph when pointed with mouse
-        fig.update_layout(hovermode="x", hoverlabel_namelength=-1,  title=parameter_name) #display the full parameter name
-        fig.update_layout(height=300*subplot_rows) #update the subplot height
-        fig.update_layout(showlegend=False) #update the subplot height
-
-        fig.show()
-
-
-    def average_parameter_value(self, parameter_name, top_companies = 15):
-        companies_data = [] #collect company-data information, needed for export 
-        companies_names = [] #collect copany-names, needed for visuals
-        param_values = [] #collect average-value for respective parameter_name
-
-        for company in self.companies_data:
-            companies_data.append(company) #get company-data
-            companies_names.append(f'{company.company_ticker} | {company.company_name}') #get company ticker and name
-            param_values.append(company.statistics.loc[parameter_name].mean()) #get average-values of the respetive parameter
-
-        
-        data = pd.DataFrame(list(zip(param_values, companies_data)), index=companies_names, columns =[parameter_name, 'company_data']) #convert lists to pandas
-        data.sort_values(by=[parameter_name], axis=0, ascending=False, inplace=True) #sort data by respective parameter_name
-        data = data.head(top_companies) #keep the top Nth company only
-        # print(data)
-        
-        data_for_visualizing = data.drop(columns='company_data') #remove company_data colums from dataframe, not need for visuals
-        output = data['company_data'].to_list() #get the company_data only, needed for export
-        fig = px.bar(data_for_visualizing, orientation='h') #create a bar-chart
-        fig.update_yaxes(autorange="reversed") #reverse y-exis to match dataframe top-to-bottom order
-        # # fig.update_layout(barmode='stack', yaxis={'categoryorder': 'total ascending'})
-
-        print(data_for_visualizing)
-        # fig.show()
-        return output
-
 class CompareCompaniesVisualizer():
 
     def __init__(self, companies_data):
@@ -1489,6 +1348,9 @@ class CompareCompaniesVisualizer():
     def statistics_ratios_subplots(self, parameter_name):
         self.subplots(parameter_name=parameter_name, type='statistics_ratios')
 
+    def price_subplots(self):
+        self.subplots(parameter_name='Stock Price', type='price')
+
     def subplots(self, parameter_name, type):
 
         fig = go.Figure()
@@ -1514,7 +1376,10 @@ class CompareCompaniesVisualizer():
             elif type == 'statistics_ratios':
                 columns = company.statistics.columns
                 rows = company.statistics.loc[parameter_name]
-
+            elif type == 'price':
+                data = yf.download(company.company_ticker, period="max",interval="3mo", progress=False)
+                columns = data.index
+                rows = data['Adj Close']
 
             trace_name = f"{company.company_ticker} | {company.company_name}"# | {parameter_name}"
             fig = fig.add_trace(go.Scatter(x = columns, y= rows, name=trace_name), row=fig_row, col=fig_col)
@@ -1531,7 +1396,7 @@ class CompareCompaniesVisualizer():
         fig.update_layout(hovermode="x", hoverlabel_namelength=-1,  title=parameter_name) #display the full parameter name
         fig.update_layout(height=300*subplot_rows) #update the subplot height
         fig.update_layout(showlegend=False) #update the subplot height
-
+        fig.update_annotations(font_size=10)
         fig.show()
 
     ##################################################################################################
