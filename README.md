@@ -33,5 +33,12 @@ The core-funtionality is written in TrandingViewClasses.py file as follows:
 
 
 # Usage
+ - for single company: tradignview-apple.ipynb
+ - for multiple companies: tradingview_energy_companies.ipynb
 
 # Examples
+![image](https://user-images.githubusercontent.com/74985932/206324014-92e0220e-c381-4157-b30b-c42e3f4fdb4f.png)
+![image](https://user-images.githubusercontent.com/74985932/206324188-e9bcd0be-ffda-4182-84c5-ebb0acfb9fac.png)
+
+
+
