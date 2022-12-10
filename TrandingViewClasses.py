@@ -24,7 +24,7 @@ import xlwings as xw
 from pathlib import Path
 
 import concurrent.futures
-logging.getLogger().setLevel(logging.ERROR)
+logging.getLogger().setLevel(logging.INFO)
 
 class START():
     """ Get company data first from DataBase and if not available Scrape it from website """
@@ -156,7 +156,7 @@ class DataBase():
     def DropTable(cls, table_name_prefix): 
         """table_name=NASDAQ-AAPL"""
 
-        table_name_suffix = ['/Income-Statement', '/Balance-Sheet', '/Cashflow-Statement', '/Ratios', '/Company-Data']
+        table_name_suffix = ['/Income-Statement', '/Balance-Sheet', '/Cashflow-Statement', '/Ratios', '/Company-Data', '/Dividents']
         #Connecting to sqlite
 
         #Droping  table if already exists
@@ -166,6 +166,17 @@ class DataBase():
                 logging.info(f"Table {table_name_prefix + table_name_suffix[i]} dropped... ")
             except sqlite3.OperationalError:
                 logging.error(f' Error removing {table_name_prefix + table_name_suffix[i]}. Table is probably not availabe in the database!')
+
+    @classmethod
+    def DropAllTables(cls):
+
+        # Get a list of all tables in the database
+        tables = cls.ListAllTables()
+
+        # Drop all tables in the list
+        for table in tables:
+            print(table)
+            cls.cursor.execute(f"DROP TABLE '{table}'")
 
     @classmethod
     def ListAllTables(cls):
@@ -238,13 +249,19 @@ class DataBase():
         self.balanse_sheet = __class__.ReadFromDatabase(table_name= company_url + "/Balance-Sheet") #attempt to get the data from database
         self.cashflow_statement = __class__.ReadFromDatabase(table_name= company_url + "/Cashflow-Statement") #attempt to get the data from database
         self.statistics = __class__.ReadFromDatabase(table_name= company_url + "/Ratios") #attempt to get the data from database
-        self.dividents = __class__.ReadFromDatabase(table_name= company_url + "/Dividents") #attempt to get the data from database
         self.company_data = __class__.ReadFromDatabase(table_name= company_url + "/Company-Data") #attempt to get the data from database
 
         if self.company_data is not None:
             self.company_name = self.company_data.loc['company_name'][0]
             self.company_ticker = self.company_data.loc['company_ticker'][0]
             self.company_url = self.company_data.loc['company_url'][0]
+            dividents_exists = self.company_data.loc['dividents'][0]
+
+            if dividents_exists == '1':
+                self.dividents = __class__.ReadFromDatabase(table_name= company_url + "/Dividents") #attempt to get the data from database
+            else:
+                self.dividents = None
+
             
 class Excel(): #static class for exporting Excel files 
     
@@ -365,7 +382,7 @@ class ScrapeTrendingView():
         # self.chrome_options.add_argument("--window-size=1000,1080")
         # chrome_options.add_argument("--headless")
 
-        self.driver = webdriver.Chrome("G:\My Drive\Investing\Programming\chromedriver.exe", options=chrome_options)
+        self.driver = webdriver.Chrome("chromedriver.exe", options=chrome_options)
         self.driver.implicitly_wait(2)
         self.time_sleep = 2
         # self.driver.maximize_window()
@@ -624,9 +641,10 @@ class ScrapeTrendingView():
         # exchage_css = "span[class='tv-symbol-header__second-line tv-symbol-header__second-line--with-hover js-symbol-dropdown'] span[class='tv-symbol-header__exchange']" #NASDAQ/NYSE
         # exchage_css = ".tv-symbol-header__exchange" #NASDAQ/NYSE
         # exchage_element = self.driver.find_element(By.CSS_SELECTOR, exchage_css)
-        exchange_xpath = "//span[@class='tv-symbol-header__second-line tv-symbol-header__second-line--with-hover js-symbol-dropdown']/span[2]"
-        exchage_element = self.driver.find_element(By.XPATH, exchange_xpath)
-        self.exchange = exchage_element.text
+        # exchange_xpath = "//span[@class='tv-symbol-header__second-line tv-symbol-header__second-line--with-hover js-symbol-dropdown']/span[2]"
+        # exchange_xpath = "//span[@class='tv-symbol-header__second-line']/span[2]"
+        # exchage_element = self.driver.find_element(By.XPATH, exchange_xpath)
+        # self.exchange = exchage_element.text
 
     def companyData_to_dataframe(self):
 
@@ -637,8 +655,13 @@ class ScrapeTrendingView():
                 'statistics_url': self.statistics_url,
                 'company_data_url': self.company_data_url,
                 'company_name':self.company_name,
-                'company_ticker': self.company_ticker,
-                "exchange": self.exchange}
+                'company_ticker': self.company_ticker} #,"exchange": self.exchange}
+
+        
+        if self.dividents is None:
+            data.update({"dividents": False})
+        else:
+            data.update({"dividents": True})
 
         self.company_data = pd.DataFrame.from_dict(data, orient='index', columns=['value'])
         
@@ -1284,6 +1307,49 @@ class StatisticsRatiosVisualizer():
                 hovermode="x", hoverlabel_namelength=-1)
             fig.show()
 
+class DividentsVisualizer():
+    def __init__(self, company_data):
+        self.company_data = company_data
+        self.company_name = company_data.company_data.loc['company_name'][0] #get company_name from the dataframe
+
+        if self.company_data.dividents is not None:
+            self.df_dividents = company_data.dividents.transpose()
+            self.dividents_vars()
+        else:
+            logging.info(f"{self.company_name} does not pay dividents!")
+
+
+    def dividents_vars(self):
+        self.dividents_per_share_fy_str = 'Dividends per share (FY)'
+        self.divident_yield_fy_percent_str = 'Dividend yield (FY) %'
+        self.payout_ratio_fy_percent_str = 'Payout ratio (FY) %'
+
+    def dividents(self):
+        if self.company_data.dividents is not None:
+            params = [self.dividents_per_share_fy_str, self.divident_yield_fy_percent_str, self.payout_ratio_fy_percent_str]
+            title = 'Dividents'
+            self.graph_template(y_axis_data=params, graph_title=title)
+        else:
+            logging.info(f"{self.company_name} does not pay dividents!")
+
+    def graph_template(self, y_axis_data, graph_title):
+            """
+            y_axis_list=['Total revenue', 'Cost of goods sold', 'Gross profit'] 
+            graph_title= f'{self.company_name} | Total Revenue - Cost Of Goods Sold = Gross Profit'
+            """
+            fig = px.line(self.df_dividents,
+                            x = self.df_dividents.index, 
+                            y = y_axis_data,
+                            title = f'{self.company_name} | {graph_title}',
+                            markers = True)
+
+            fig.update_traces(
+                mode="markers+lines", hovertemplate=None)
+            fig.update_layout(
+                hovermode="x", hoverlabel_namelength=-1)
+            fig.show()
+
+
 class CompareCompaniesVisualizer():
 
     def __init__(self, companies_data):
@@ -1293,8 +1359,9 @@ class CompareCompaniesVisualizer():
         self.balanse_sh_params = BalanceSheetVisualizer(company_data=companies_data[0])
         self.cashflow_params = CashflowStatementVisualizer(company_data=companies_data[0])
         self.statistics_params = StatisticsRatiosVisualizer(company_data=companies_data[0])
+        self.dividents_params = DividentsVisualizer(company_data=companies_data[0])
 
-
+    """
     def income_statement_visualizer_new(self, parameter_name):
         self.singleplot(parameter_name=parameter_name, type='income_statement')
 
@@ -1333,9 +1400,9 @@ class CompareCompaniesVisualizer():
         fig.update_traces(mode="markers+lines", hovertemplate=None) #enable hover-mode, interactively display values on the graph when pointed with mouse
         fig.update_layout(hovermode="x", hoverlabel_namelength=-1,  title=parameter_name) #display the full parameter name
         fig.show()
-
+    """
     ##################################################################################################
-   
+      
     def income_statement_subplots(self, parameter_name):
         self.subplots(parameter_name=parameter_name, type='income_statement')
 
@@ -1344,6 +1411,9 @@ class CompareCompaniesVisualizer():
 
     def cashflow_statement_subplots(self, parameter_name):
         self.subplots(parameter_name=parameter_name, type='cashflow_statement')
+
+    def dividents_subplots(self, parameter_name):
+        self.subplots(parameter_name=parameter_name, type='dividents')
 
     def statistics_ratios_subplots(self, parameter_name):
         self.subplots(parameter_name=parameter_name, type='statistics_ratios')
@@ -1364,6 +1434,7 @@ class CompareCompaniesVisualizer():
 
         for company in self.companies_data:
             
+
             if type == 'income_statement':
                 columns = company.income_statement.columns
                 rows = company.income_statement.loc[parameter_name]
@@ -1376,6 +1447,13 @@ class CompareCompaniesVisualizer():
             elif type == 'statistics_ratios':
                 columns = company.statistics.columns
                 rows = company.statistics.loc[parameter_name]
+            elif type == 'dividents':
+                if company.dividents is not None:
+                    columns = company.dividents.columns
+                    rows = company.dividents.loc[parameter_name]
+                else:
+                    columns = [0]
+                    rows = [0]
             elif type == 'price':
                 data = yf.download(company.company_ticker, period="max",interval="3mo", progress=False)
                 columns = data.index
