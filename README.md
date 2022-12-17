@@ -31,6 +31,10 @@ The core-funtionality is written in TrandingViewClasses.py file as follows:
 - class StatisticsRatiosVisualizer - visualize ratios parameters
 - class CompareCompaniesVisualizer - compare more than one company
 
+# What I learned
+- Interacting with sqlite3 database
+- Scraping web-data with Selenium
+- Working with pandas
 
 # Usage
  - for single company: tradignview-apple.ipynb
