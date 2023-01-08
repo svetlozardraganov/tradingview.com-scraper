@@ -1,30 +1,51 @@
 #Imports
 from timeit import default_timer as timer
+
 start = timer()
 
-import pandas as pd
-import matplotlib.pyplot as plt
-
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.offline import iplot
-from plotly.subplots import make_subplots
-
+import concurrent.futures
 import logging
-import time
-
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.action_chains import ActionChains
-
+import sys
 import sqlite3
-import yfinance as yf
-import xlwings as xw
+import time
 from pathlib import Path
 
-import concurrent.futures
-logging.getLogger().setLevel(logging.INFO)
+import matplotlib.pyplot as plt
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import xlwings as xw
+import yfinance as yf
+from plotly.offline import iplot
+from plotly.subplots import make_subplots
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions
+
+#logger setup
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
+
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.DEBUG)
+stdout_handler.setFormatter(formatter)
+
+file_handler = logging.FileHandler('logs.log')
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(formatter)
+
+
+logger.addHandler(file_handler)
+logger.addHandler(stdout_handler)
+
+
+
+
 
 class START():
     """ Get company data first from DataBase and if not available Scrape it from website """
@@ -59,8 +80,9 @@ class START():
         #get the data from the website
         if urls_not_in_database: #if not empty
 
-            #start website scraping in separate threads 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
+            # #start website scraping in separate threads
+            max_thread = 4
+            with concurrent.futures.ThreadPoolExecutor(max_thread) as executor:
                 results = [executor.submit(cls.run_in_separate_thread, url) for url in urls_not_in_database ]
                 
                 #when webscraping is completed
@@ -69,6 +91,12 @@ class START():
                     print(">"*50, type(company_data))
                     cls.companies.append(company_data)
                     DataBase.AddToDatabase(data=company_data)
+            
+            #start website scraping in single thread:
+            # for url in urls_not_in_database:
+            #     company_data = ScrapeTrendingView(company_url=url)
+            #     cls.companies.append(company_data)
+            #     DataBase.AddToDatabase(data=company_data)
 
         
         DataBase.Stop() #Disconnect Database 
@@ -88,13 +116,13 @@ class DataBase():
     def Start(cls): #Connect to Database
         cls.conn = sqlite3.connect(cls.database_file) #connect to sqlite3-database
         cls.cursor = cls.conn.cursor()
-        logging.info('DataBase Connected')
+        logger.info('DataBase Connected')
 
     @classmethod
     def Stop(cls): #Disconnect/Commit to Database
         cls.conn.commit() # Commit your changes in the database
         cls.conn.close() #Closing the connection
-        logging.info('DataBase Disconnected')
+        logger.info('DataBase Disconnected')
     
     @classmethod
     def AddToDatabase(cls, data): #method that innitiates the write-to-database method with the needed parameters
@@ -111,7 +139,7 @@ class DataBase():
         cls.StoreInDatabase(data=data.company_data, table_name=(data.company_url + '/Company-Data'))
 
     @classmethod
-    def StoreInDatabase(cls, data, table_name): #method that writes the data into the database
+    def StoreInDatabase(cls, data, table_name, if_exists_value='replace', data_index=True): #method that writes the data into the database
         """data = ScrapeTrendingView().income_statement \n
         data = ScrapeTrendingView().balanse_sheet \n
         data = ScrapeTrendingView().cashflow_statement \n
@@ -127,8 +155,8 @@ class DataBase():
         table_name = NASDAQ-AAPL/Company-Data \n
         """
 
-        logging.info(f'Storring {table_name} in {cls.database_file}')
-        data.to_sql(name=table_name, con=cls.conn, if_exists='replace',  index=True) #store dataframe to sqlite-database
+        logger.info(f'Storring {table_name} in {cls.database_file}')
+        data.to_sql(name=table_name, con=cls.conn, if_exists=if_exists_value,  index=data_index) #store dataframe to sqlite-database
 
     @classmethod
     def ReadFromDatabase(cls, table_name): #read data from Database, if available return the data if not return None
@@ -144,7 +172,7 @@ class DataBase():
 
         try: #get the data from database and put it in pandas-dataframe
             output = pd.read_sql_query(f"SELECT * from '{table_name}'", cls.conn, index_col='index') 
-            logging.info(f"Load {table_name} from DataBase")
+            logger.info(f"Load {table_name} from DataBase")
             
         except : #if data not available, return None
             logging.error(f'ERROR: {table_name}, not found in {cls.database_file}')
@@ -163,7 +191,7 @@ class DataBase():
         for i in range(0,len(table_name_suffix)):
             try:
                 cls.cursor.execute(f"DROP TABLE '{table_name_prefix + table_name_suffix[i]}'")
-                logging.info(f"Table {table_name_prefix + table_name_suffix[i]} dropped... ")
+                logger.info(f"Table {table_name_prefix + table_name_suffix[i]} dropped... ")
             except sqlite3.OperationalError:
                 logging.error(f' Error removing {table_name_prefix + table_name_suffix[i]}. Table is probably not availabe in the database!')
 
@@ -240,6 +268,34 @@ class DataBase():
         # INSERT INTO "ARCA-BATL/Company-Data" ("index", "value") VALUES ("1", "2")
     
     @classmethod
+    def InsertRowIfNotExists(cls, table_name, input_columns, input_values):
+        # logger.info(f'Insert or Ignore Into {table_name} in {cls.database_file}')
+        # logger.info(f"columns = {input_columns} \n values = {input_values}")
+        cls.cursor.execute(f'INSERT OR IGNORE INTO "{table_name}" {input_columns} VALUES {input_values}')
+
+    @classmethod
+    def FindElementsInTableColumn(cls, table_name, column_name, search_text):
+        result = cls.cursor.execute(f'SELECT "{column_name}" FROM "{table_name}" WHERE "{column_name}"="{search_text}"')
+        output = result.fetchall()
+        print(len(output))
+        return output
+    
+    @classmethod
+    def FindNumberOfSectorElements(cls, table_name, market, symbol, exchange, sector):
+        result = cls.cursor.execute(f'SELECT "sector" FROM "{table_name}" WHERE "market"="{market}" AND "symbol"="{symbol}" AND \
+                                      "exchange"="{exchange}" AND "sector"="{sector}"')
+        output = result.fetchall()
+        # logger.info(f"Number of Items found in DataBase {len(output)}")
+        return len(output)
+
+    @classmethod
+    def FindNumberOfExchangeElements(cls, table_name, market, symbol, exchange):
+        result = cls.cursor.execute(f'SELECT "exchange" FROM "{table_name}" WHERE "market"="{market}" AND "symbol"="{symbol}" AND "exchange"="{exchange}"')
+        output = result.fetchall()
+        # logger.info(f"Number of Items found in DataBase {len(output)}")
+        return len(output)
+
+    @classmethod
     def Test(cls):
         print("DataBase class is working")
 
@@ -306,7 +362,7 @@ class Excel(): #static class for exporting Excel files
     def insert_visual(cls, fig, name):
 
         cell = cls.insert_col + str(cls.insert_row) #calculate the cell where the visual will be inserted
-        logging.info(cell)
+        logger.info(cell)
 
         cls.sht.pictures.add(fig,
                                 name = name,
@@ -317,7 +373,7 @@ class Excel(): #static class for exporting Excel files
                                 width = cls.width)
 
         cls.insert_row = cls.insert_row + 25 #increase row-number to offset the next visual
-        logging.info(cls.insert_row)
+        logger.info(cls.insert_row)
     
     @classmethod
     def close(cls):
@@ -436,7 +492,7 @@ class ScrapeTrendingView():
         self.income_statement = self.scraped_data_to_dataframe(output=output)
 
     def scrapeBalanceSheet(self, company_url):
-        logging.info('Start Balance Sheet Scrape')
+        logger.info('Start Balance Sheet Scrape')
         self.balanse_sheet_url = "https://www.tradingview.com/symbols/" + \
             company_url + "/financials-balance-sheet/?selected="
         self.driver.get(self.balanse_sheet_url)
@@ -449,7 +505,7 @@ class ScrapeTrendingView():
         # expand balance-sheet collapsed-rows level-1
         i = 0
         while True:
-            # logging.info('Start Expanding Balance Sheet Rows Level-1')
+            # logger.info('Start Expanding Balance Sheet Rows Level-1')
             i = i+1
             if i > __class__.maximum_number_of_colapsed_rows:
                 logging.error(f'Break While loop i={i}')
@@ -465,13 +521,13 @@ class ScrapeTrendingView():
                 # print(expand_arrow_element.if_exists)
 
             except:
-                # logging.info('End Expanding Balance Sheet Rows Level-1')
+                # logger.info('End Expanding Balance Sheet Rows Level-1')
                 break
 
          # expand balance-sheet collapsed-rows level-2
         i = 0
         while True:
-            # logging.info('Start Expanding Balance Sheet Rows Level-2')
+            # logger.info('Start Expanding Balance Sheet Rows Level-2')
             i = i+1
             if i >  __class__.maximum_number_of_colapsed_rows:
                 logging.error(f'Break While loop i={i}')
@@ -486,7 +542,7 @@ class ScrapeTrendingView():
                 # print(expand_arrow_element.if_exists)
 
             except:
-                # logging.info('End Expanding Balance Sheet Rows Level-2')
+                # logger.info('End Expanding Balance Sheet Rows Level-2')
                 break
 
         # scrape the data
@@ -495,7 +551,7 @@ class ScrapeTrendingView():
 
     def scrapeCashFlow(self, company_url):
 
-        logging.info('Start CashFlow Scrape')
+        logger.info('Start CashFlow Scrape')
         self.cashflow_url = "https://www.tradingview.com/symbols/" + \
             company_url + "/financials-cash-flow/?selected="
 
@@ -509,10 +565,10 @@ class ScrapeTrendingView():
         # expand cash-flow collapsed-rows level-1
         i = 0
         while True:
-            # logging.info('Start Expanding CashFlow Rows Level-1')
+            # logger.info('Start Expanding CashFlow Rows Level-1')
             i = i+1
             if i > 20:
-                logging.info(f'Break While loop i={i}')
+                logger.info(f'Break While loop i={i}')
                 break
             try:
                 # expand_arrow_xpath = "//span[@class='arrow-_PBNXQ7k']"
@@ -525,16 +581,16 @@ class ScrapeTrendingView():
                 # print(expand_arrow_element.if_exists)
 
             except:
-                # logging.info('End Expanding CashFlow Rows Level-1')
+                # logger.info('End Expanding CashFlow Rows Level-1')
                 break
 
         # expand cash-flow collapsed-rows level-2
         i = 0
         while True:
-            # logging.info('Start Expanding CashFlow Rows Level-2')
+            # logger.info('Start Expanding CashFlow Rows Level-2')
             i = i+1
             if i > 20:
-                logging.info(f'Break While loop i={i}')
+                logger.info(f'Break While loop i={i}')
                 break
             try:
                 expand_arrow_xpath = "//span[@class='arrow-_PBNXQ7k']"
@@ -546,7 +602,7 @@ class ScrapeTrendingView():
                 # print(expand_arrow_element.if_exists)
 
             except:
-                # logging.info('End Expanding CashFlow Rows Level-2')
+                # logger.info('End Expanding CashFlow Rows Level-2')
                 break
 
         # scrape the data
@@ -554,7 +610,7 @@ class ScrapeTrendingView():
         self.cashflow_statement = self.scraped_data_to_dataframe(output=output)
 
     def scrapeStatistics(self, company_url):
-        logging.info('Start Statistics Scrape')
+        logger.info('Start Statistics Scrape')
         self.statistics_url = "https://www.tradingview.com/symbols/" + company_url + "/financials-statistics-and-ratios/?selected="
         self.driver.get(self.statistics_url)
         time.sleep(self.time_sleep)
@@ -599,7 +655,7 @@ class ScrapeTrendingView():
         self.statistics = self.scraped_data_to_dataframe(output=output)
 
     def scrapeDividents(self,company_url):
-        logging.info('Start Dividents Scrape')
+        logger.info('Start Dividents Scrape')
         self.dividents_url = "https://www.tradingview.com/symbols/" + company_url + "/financials-dividends/?selected="
         self.driver.get(self.dividents_url)
         time.sleep(self.time_sleep)
@@ -803,6 +859,418 @@ class ScrapeTrendingView():
 
         prince_increase_percent_css = ".js-symbol-change-pt.tv-symbol-price-quote__change-value"
         prince_increase_percent_element = self.driver.find_element(By.CSS_SELECTOR, prince_increase_percent_css)
+
+class ScrapeTrandingViewScreener():
+
+
+    def __init__(self):
+
+        self.screener_url = "https://www.tradingview.com/screener/"
+
+        # innitialize and set chrome-webdriver options
+        chrome_options = Options()
+        chrome_options.add_argument("--start-maximized")
+        # self.chrome_options.add_argument("--window-size=1000,1080")
+        # chrome_options.add_argument("--headless")
+
+        self.driver = webdriver.Chrome("chromedriver.exe", options=chrome_options)
+        self.driver.implicitly_wait(5)
+        self.time_sleep = 1
+        # self.driver.maximize_window()
+
+        self.driver.get(self.screener_url)
+        # time.sleep(self.time_sleep)
+         
+        #define filters
+        self.market = "USA"
+        self.symbol = "Common Stock"
+        self.exchange = "NYSE"
+        #self.exchange = "NASDAQ"
+        # self.sector =  "Communications" # "Commercial Services" # #"Finance"
+
+        #start scraping
+        self.hide_show_columns()
+        self.reset_filters()
+        self.set_filter_symbol_type(symbox_type_text=self.symbol)
+        # self.set_filter_exchange(exchange_text=self.exchange)
+        # self.set_filter_sector(sector_text=self.sector)
+
+        # The Main Loop   
+        
+        # loop over filter exchange
+        exchange = self.get_items_filter_exchange()
+        for i in range(len(exchange)):
+            logger.info(f"{i+1}/{len(exchange)} Exchange={exchange[i]}")
+            self.set_filter_exchange(exchange_text=exchange[i])
+            self.exchange = exchange[i]
+
+            #get number of tickers in DataBase
+            DataBase.Start()
+            number_tickers_database = DataBase.FindNumberOfExchangeElements(table_name="Tickers", market=self.market, symbol=self.symbol, exchange=self.exchange)
+            DataBase.Stop()
+
+            result = self.get_number_of_rows_in_table() #get the number of the items to be scraped.
+            if result == None:
+                logger.info(f"Number of Rows = {result}. Scraping not needed!")
+
+            elif result <= 1000: #if result is less than 1000, scrape the tickers for all sectors
+                logger.info(f"Number of Rows = {result} <= 1000")
+                logger.info(f"Number of items with Exchange = {self.exchange} in DataBase: {number_tickers_database}")
+                
+                if result != number_tickers_database:
+                    logger.info(f"Number of items in DataBase {number_tickers_database} NOT equals Number of Items on Page {result}. Start Scraping per Exchange!")
+                else:
+                    logger.info(f"Number of items in DataBase {number_tickers_database} equals Number of Items on Page {result}. Scraping not needed!")
+
+
+            elif result >1000: #if result is greater than 1000, scrate the tickers per sector
+                logger.info(f"Number of Rows = {result} > 1000")
+                logger.info(f"Number of items with Exchange = {self.exchange} in DataBase: {number_tickers_database}")
+                
+                if result != number_tickers_database:
+
+                    logger.info(f"Number of items in DataBase {number_tickers_database} NOT equals Number of Items on Page {result}. Start Scraping per Sectors!")
+        
+                    # loop over filter sector
+                    #get all filter-sectors and loop over them
+                    sectors = self.get_items_filter_sector()
+                    for i in range(len(sectors)):
+                        # logger.info(' '.join(map(str, sectors)))
+                        logger.info(f"{i+1}/{len(sectors)} Sector={sectors[i]}")
+                        self.set_filter_sector(sector_text=sectors[i])
+                        self.sector = sectors[i]
+                        self.get_main_table_rows()
+                        self.reset_filter_sector()
+                
+                else:
+                    logger.info(f"Number of items in DataBase {number_tickers_database} equals Number of Items on Page {result}. Scraping not needed!")
+
+        # self.driver.close()
+    
+
+    def reset_filters(self):
+
+        #open filters popup page
+        filters_btn_xpath = "//div[@class='tv-screener-toolbar__button tv-screener-toolbar__button--options tv-screener-toolbar__button--filters apply-common-tooltip common-tooltip-fixed']"
+        self.filters_btn = self.driver.find_element(by=By.XPATH, value=filters_btn_xpath)
+        self.filters_btn.click()
+
+        #filters popup page
+        reset_all_btn_xpath = "//div[@class='tv-screener-search__reset js-search-reset']"
+        self.reset_all_btn = self.driver.find_element(by=By.XPATH, value=reset_all_btn_xpath)
+        self.reset_all_btn.click()
+
+        #close filters popup page
+        webdriver.ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+
+    def set_filter_symbol_type(self, symbox_type_text):
+
+        #open filters popup page
+        self.filters_btn.click()
+        
+        #click filters>symbol-type button to display dropdown menu
+        filters_symbol_type_btn_xpath = "//div[@class='tv-screener-dialog__selectbox-container js-filter-field-name js-dropdown-toggle']//span[@class='tv-screener-dialog__filter-field-content-value'][normalize-space()='Any']"
+        self.filters_symbol_type_btn = self.driver.find_element(by=By.XPATH, value=filters_symbol_type_btn_xpath)
+        self.filters_symbol_type_btn.click()
+
+        #click on selected sector in dropdown
+        self.select_from_dropdown_menu(selection_text=symbox_type_text)
+
+        #close filters popup page
+        webdriver.ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+
+
+    def set_filter_exchange(self, exchange_text):
+
+        #open filters popup page
+        self.filters_btn.click()
+
+        #reset filter exchange
+        try:
+            reset_filter_exchange_xpath = "//div[@class='tv-screener-dialog__filter-field js-filter-field js-filter-field-exchange tv-screener-dialog__filter-field--cat1 js-wrap tv-screener-dialog__filter-field--active']/div[@class='tv-screener-dialog__filter-field-reset apply-common-tooltip js-reset']"
+            reset_filter_exchange_btn = self.driver.find_element(by=By.XPATH, value=reset_filter_exchange_xpath)
+            reset_filter_exchange_btn.click()
+            logger.info("Reset Filter Exchange")
+        except:
+            logger.info("Filter Exchange does not need reset")
+
+        #click filters>exchange btn to show dropdown window
+        filters_exchange_btn_xpath = "//div[@class='tv-screener-dialog__selectbox-container js-filter-field-exchange js-dropdown-toggle']//span[@class='tv-screener-dialog__filter-field-content-value'][normalize-space()='Any']"
+        self.filters_exchange_btn = self.driver.find_element(by=By.XPATH, value=filters_exchange_btn_xpath)
+        self.filters_exchange_btn.click()
+
+
+        #click on selected sector in dropdown
+        self.select_from_dropdown_menu(selection_text=exchange_text)
+
+        #close filters popup page
+        webdriver.ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+
+    def get_items_filter_exchange(self):
+        output = []
+
+        #open filters popup page
+        self.filters_btn.click()
+
+        #click filters>sector btn to show dropdown window
+        filters_exchange_btn_xpath = "//div[@class='tv-screener-dialog__selectbox-container js-filter-field-exchange js-dropdown-toggle']//span[@class='tv-screener-dialog__filter-field-content-value'][normalize-space()='Any']"
+        self.filters_exchange_btn = self.driver.find_element(by=By.XPATH, value=filters_exchange_btn_xpath)
+        self.filters_exchange_btn.click()
+
+        #get elements in sector-dropdown window
+        filters_exchange_dropdown_xpath = "//div[@class='tv-dropdown-behavior__item js-item-wrap']"
+        self.filters_exchange_dropdown = self.driver.find_elements(by=By.XPATH, value=filters_exchange_dropdown_xpath)
+
+        for element in self.filters_exchange_dropdown:
+            # ActionChains(self.driver).move_to_element(element).perform()
+            self.driver.execute_script("arguments[0].scrollIntoView();", element)
+            # print(element.text)
+            output.append(element.text)
+
+        #close filters popup page
+        webdriver.ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+
+        return output   
+
+
+    def set_filter_sector(self, sector_text):
+        
+        #open filters popup page
+        self.filters_btn.click()
+        time.sleep(self.time_sleep)
+
+        #click filters>sector btn to show dropdown window
+        sector_btn_xpath = "//div[@class='tv-screener-dialog__selectbox-container js-filter-field-sector js-dropdown-toggle']//span[@class='tv-screener-dialog__selectbox-caption-label js-label']"
+        self.filters_sector_btn = self.driver.find_element(by=By.XPATH, value=sector_btn_xpath)
+        self.filters_sector_btn.click()
+
+        #click on selected sector in dropdown
+        self.select_from_dropdown_menu(selection_text=sector_text)
+            
+        #close filters popup page
+        time.sleep(self.time_sleep)
+        webdriver.ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+        
+
+    def reset_filter_sector(self):
+        
+        #open filters popup page
+        self.filters_btn.click()
+        time.sleep(self.time_sleep)
+
+        #reset sector-filter
+        try:
+            reset_sector_xpath = "//div[@class='tv-screener-dialog__filter-field js-filter-field js-filter-field-sector tv-screener-dialog__filter-field--cat1 js-wrap tv-screener-dialog__filter-field--active']/div[@class='tv-screener-dialog__filter-field-reset apply-common-tooltip js-reset']"
+            self.reset_sector_btn = self.driver.find_element(by=By.XPATH, value=reset_sector_xpath)
+            self.reset_sector_btn.click()
+            logger.info("Reset Filter Sector")
+        except:
+            logger.info("Filter Sector does not need reset")
+
+        #close filters popup page
+        time.sleep(self.time_sleep)
+        webdriver.ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+
+    def get_items_filter_sector(self):
+        output = []
+
+        #open filters popup page
+        self.filters_btn.click()
+
+        #click filters>sector btn to show dropdown window
+        sector_btn_xpath = "//div[@class='tv-screener-dialog__selectbox-container js-filter-field-sector js-dropdown-toggle']//span[@class='tv-screener-dialog__selectbox-caption-label js-label']"
+        self.filters_sector_btn = self.driver.find_element(by=By.XPATH, value=sector_btn_xpath)
+        self.filters_sector_btn.click()
+
+        #get elements in sector-dropdown window
+        filters_sector_dropdown_xpath = "//div[@class='tv-dropdown-behavior__item js-item-wrap']"
+        self.filters_sector_dropdown = self.driver.find_elements(by=By.XPATH, value=filters_sector_dropdown_xpath)
+
+        for element in self.filters_sector_dropdown:
+            # ActionChains(self.driver).move_to_element(element).perform()
+            self.driver.execute_script("arguments[0].scrollIntoView();", element)
+            # print(element.text)
+            output.append(element.text)
+
+        #close filters popup page
+        webdriver.ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+
+        return output        
+
+
+    def select_from_dropdown_menu(self, selection_text):
+
+        #get elements in sector-dropdown window
+        filters_sector_dropdown_xpath = "//div[@class='tv-dropdown-behavior__item js-item-wrap']"
+        self.filters_sector_dropdown = self.driver.find_elements(by=By.XPATH, value=filters_sector_dropdown_xpath)
+
+        #loop over dropdown elements and click the one that corresponds to input 
+        for element in self.filters_sector_dropdown:
+            # ActionChains(self.driver).move_to_element(element).perform()
+            self.driver.execute_script("arguments[0].scrollIntoView();", element)
+            if element.text == selection_text:
+                element.click()
+                time.sleep(self.time_sleep)
+                # print(f"Click on {element.text}")
+                break
+
+    def hide_show_columns(self):
+        
+        #columns setup - hide all columns
+        column_setup_btn_xpath = "//div[@class='tv-screener-sticky-header-wrapper__fields-button-wrap']"
+        column_setup_btn_element = self.driver.find_element(by=By.XPATH, value=column_setup_btn_xpath)
+        
+        while True:
+            try:
+                column_setup_btn_element.click()
+                break
+            except:
+                logger.info(f'Cannot click on Column Setup button. Wait {self.time_sleep}s and try again!"')
+                time.sleep(self.time_sleep)
+
+        column_setup_items_xpath = "//span[@class='tv-control-checkbox__label']"
+        column_setup_items_elements = self.driver.find_elements(by=By.XPATH, value=column_setup_items_xpath)
+
+
+        for i,element in enumerate(column_setup_items_elements):
+            element.click()
+            # ActionChains(self.driver).move_to_element(element).click().perform()
+            if i == 10:
+                break
+
+        webdriver.ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+        time.sleep(self.time_sleep)
+        
+        #show columns
+        for item in ['Exchange', 'Sector', 'Industry']:
+            column_setup_btn_element.click()
+
+            column_setup_search_xpath = "//div[@class='tv-dropdown__body tv-dropdown__body--over-trigger tv-dropdown-behavior__body tv-screener-fields-popup tv-dropdown__body--position_right i-opened']//input[@placeholder='Search column']"
+            column_setup_search_element = self.driver.find_element(by=By.XPATH, value=column_setup_search_xpath)
+            column_setup_search_element.send_keys(item)
+
+            industry_xpath = f"//span[normalize-space()='{item}']"
+            industry_element = self.driver.find_element(by=By.XPATH, value=industry_xpath)
+            industry_element.click()
+
+            #close filters popup page
+            webdriver.ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+        time.sleep(self.time_sleep)
+
+    def get_main_table_rows(self):
+        time.sleep(self.time_sleep)
+
+        #activate/create DataBase
+        DataBase.Start()
+        self.db_columns = ("market", "exchange", "symbol", "sector", "industry", "company_ticker", "company_name", "company_url") #DataBase columns
+        DataBase.cursor.execute("""CREATE TABLE if not exists Tickers (
+            market TEXT,
+            exchange TEXT,
+            symbol TEXT,
+            sector TEXT,
+            industry TEXT,
+            company_ticker TEXT,
+            company_name TEXT,
+            company_url	TEXT PRIMARY KEY)""")
+
+        #get data from DataBase
+        number_tickers_database = DataBase.FindNumberOfSectorElements(table_name="Tickers", market=self.market, symbol=self.symbol, \
+                                 exchange=self.exchange, sector=self.sector)
+
+        #get the number of the rows from the table-top element: (TICKER 238 MATCHES)
+        number_of_rows = self.get_number_of_rows_in_table()
+
+
+        if number_of_rows == None: #"NO MACHES" - no tickers found 
+            logger.info("No Tickers found on the page")
+            return
+        elif number_of_rows == number_tickers_database:
+            logger.info(f"Number of Items on the page {number_of_rows} equals Number of Items in DataBase {number_tickers_database}. Scraping not needed!")
+            return
+        elif number_of_rows != number_tickers_database:
+            logger.info(f"Number of Items on the page {number_of_rows} NOT equals Number of Items in DataBase {number_tickers_database}. Start scraping!")
+
+
+        #scroll to the bottom of the page to load all rows
+        while True: #number_of_rows != row_elements_counted:
+
+            height_before_scroll = int(self.driver.execute_script("return document.documentElement.scrollHeight"))
+            
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);") 
+            time.sleep(self.time_sleep)
+
+            height_after_scroll = int(self.driver.execute_script("return document.documentElement.scrollHeight"))
+            
+            #count number of rows in the table
+            row_xpath = "//tr[@class='tv-data-table__row tv-data-table__stroke tv-screener-table__result-row']"
+            row_elements = self.driver.find_elements(by=By.XPATH, value=row_xpath)
+            row_elements_counted = len(row_elements)
+
+
+            if (height_before_scroll == height_after_scroll) and (number_of_rows == row_elements_counted):
+                logger.info(f"Page scroller is at the very bottom. Start scraping items!")
+                break
+            else:
+                logger.info(f"Page scroller is NOT at the very bottom. Scroll the page down!")
+                logger.info(f"height_before_scroll={height_before_scroll} | height_after_scroll={height_after_scroll}")
+                logger.info(f"number_of_rows={number_of_rows} | row_elements_counted={row_elements_counted}")
+                time.sleep(self.time_sleep)
+
+
+        #SCRAPE MAIN-TABLE
+        for i, element in enumerate(row_elements):
+
+            #get company name (first column)
+            company_name_element = element.find_element(by=By.XPATH, value="./td/div/div[2]/span[2]")
+            company_name = company_name_element.text
+
+            #get ticker name and ticker-url (first column)
+            href_element = element.find_element(by=By.XPATH, value=".//td/div/div[2]/a")
+            company_url = href_element.get_attribute('href')
+            company_ticker = href_element.text
+
+            #get exchange text (second column)
+            exchange_column_element = element.find_element(by=By.XPATH, value="./td[2]")
+            exchange = exchange_column_element.text
+
+            #get sector text (third column)
+            sector_column_element = element.find_element(by=By.XPATH, value="./td[3]")
+            sector = sector_column_element.text
+
+            #get industry text (forth column)
+            industry_column_element = element.find_element(by=By.XPATH, value="./td[4]")
+            industry = industry_column_element.text
+
+
+            #combine scraped items in a tuple
+            logger.info(' | '.join(map(str, [f"{i}/{number_of_rows}", self.market, exchange, self.symbol, sector, industry, company_ticker, company_name, company_url])))
+            self.scraped_values = (self.market, exchange, self.symbol, sector, industry, company_ticker, company_name, company_url)
+            DataBase.InsertRowIfNotExists(table_name="Tickers", input_columns=self.db_columns, input_values=self.scraped_values)
+
+        #Disconnect from DataBase
+        DataBase.Stop()
+
+    def get_number_of_rows_in_table(self):
+        #get the number of the rows from the table-top element: (TICKER 238 MATCHES)
+        number_of_rows_css = "div[class='js-field-total tv-screener-table__field-value--total']"
+
+        while True:
+            try:
+                number_of_rows_element = self.driver.find_element(by=By.CSS_SELECTOR, value=number_of_rows_css)
+                break
+            except:
+                logger.info(f'Cannot find number_of_rows_element. Wait {self.time_sleep}s and try again!"')
+                time.sleep(self.time_sleep)
+        
+        number_of_rows = number_of_rows_element.text.split()[0]
+        
+        if number_of_rows == "NO": #"NO MACHES" - no tickers found 
+            logger.info("No Tickers found on the page")
+            return None
+        else:
+            return int(number_of_rows)
+
+
 
 class IncomeStatementVisualizer():
     
@@ -1151,7 +1619,6 @@ class CashflowStatementVisualizer():
         self.cashflow_investing_activities()
         self.cash_from_financing_activities()
 
-
     def cashflow_operating_investing_financial (self):
         # params = ['Cash from operating activities', 'Cash from investing activities','Cash from financing activities', 'Free cash flow']
         params = [self.cash_from_operating_activities_str,
@@ -1159,8 +1626,7 @@ class CashflowStatementVisualizer():
                 self.cash_from_financing_activities_str,
                 self.free_cash_flow_str]
         title = 'Cashflow From Operating/Investing/Financial Activities'
-        self.graph_template(y_axis_data=params, graph_title=title)
-        
+        self.graph_template(y_axis_data=params, graph_title=title)    
 
     def cashflow_operating_activities(self):
         # params = ['Cash from operating activities', 'Funds from operations','Changes in working capital']
@@ -1180,7 +1646,6 @@ class CashflowStatementVisualizer():
         title = 'Purchase/sale of business + Purchase/sale of investments + Capital expenditures + Other investing cash flow items = Cash from investing activities'
         self.graph_template(y_axis_data=params, graph_title=title)
 
-
     def cash_from_financing_activities(self):
         params = [self.issuance_retirement_of_stock_net_str,
                     self.issuance_retirement_of_debt_net_str,
@@ -1188,7 +1653,6 @@ class CashflowStatementVisualizer():
                     self.other_financing_cash_flow_items_total_str]
         title =  '+'.join(params) + '= Cash from financial activities'
         self.graph_template(y_axis_data=params, graph_title=title)
-
 
     def graph_template(self, y_axis_data, graph_title):
             """
@@ -1308,6 +1772,7 @@ class StatisticsRatiosVisualizer():
             fig.show()
 
 class DividentsVisualizer():
+
     def __init__(self, company_data):
         self.company_data = company_data
         self.company_name = company_data.company_data.loc['company_name'][0] #get company_name from the dataframe
@@ -1316,8 +1781,7 @@ class DividentsVisualizer():
             self.df_dividents = company_data.dividents.transpose()
             self.dividents_vars()
         else:
-            logging.info(f"{self.company_name} does not pay dividents!")
-
+            logger.info(f"{self.company_name} does not pay dividents!")
 
     def dividents_vars(self):
         self.dividents_per_share_fy_str = 'Dividends per share (FY)'
@@ -1330,7 +1794,7 @@ class DividentsVisualizer():
             title = 'Dividents'
             self.graph_template(y_axis_data=params, graph_title=title)
         else:
-            logging.info(f"{self.company_name} does not pay dividents!")
+            logger.info(f"{self.company_name} does not pay dividents!")
 
     def graph_template(self, y_axis_data, graph_title):
             """
@@ -1524,3 +1988,47 @@ class CompareCompaniesVisualizer():
         print(data_for_visualizing)
         fig.show()
         return output
+
+
+class CustomCalculations():
+
+    def growth_per_period(self, input_data, periods=1):
+        """
+        Convert company dataframes to growth-rate dataframes:
+        -Income Statemnt
+        -Balanse Sheet
+        -Cashflow Statement
+        -Statistics/Ratios
+        -Dividents
+
+        input_data expects to receive company.dataframes
+        periods are by default 1, but could be changed if needed.
+        """
+        df_transposed = input_data.income_statement.transpose()
+        df_transposed_growth_rate = df_transposed.pct_change(periods = periods)
+        self.income_statement_growth_rate = df_transposed_growth_rate.transpose()
+
+        df_transposed = input_data.balanse_sheet.transpose()
+        df_transposed_growth_rate = df_transposed.pct_change(periods = periods)
+        self.balanse_sheet_growth_rate = df_transposed_growth_rate.transpose()
+
+        df_transposed = input_data.cashflow_statement.transpose()
+        df_transposed_growth_rate = df_transposed.pct_change(periods = periods)
+        self.cashflow_statement_growth_rate = df_transposed_growth_rate.transpose()
+
+        df_transposed = input_data.statistics.transpose()
+        df_transposed_growth_rate = df_transposed.pct_change(periods = periods)
+        self.statistics_growth_rate = df_transposed_growth_rate.transpose()
+
+        df_transposed = input_data.dividents.transpose()
+        df_transposed_growth_rate = df_transposed.pct_change(periods = periods)
+        self.dividents_growth_rate = df_transposed_growth_rate.transpose()
+
+
+
+screener = ScrapeTrandingViewScreener()
+
+# DataBase.Start()
+# result = DataBase.FindNumberOfSectorElements(table_name="Tickers", market="USA",symbol="Common Stock", exchange="NYSE ARCA", sector="Commercial Services")
+# print(result)
+# DataBase.Stop()
